@@ -27,9 +27,12 @@ public class DeleteInventoryItemHandler : IRequestHandler<DeleteInventoryItemCom
         // Unlink scan queue items
         var scanItems = _context.ScanQueueItems.Where(s => s.LinkedInventoryItemId == request.Id);
         foreach (var scan in scanItems)
-        {
             scan.LinkedInventoryItemId = null;
-        }
+
+        // Unlink label queue items
+        var labelItems = _context.LabelQueueItems.Where(l => l.LinkedInventoryItemId == request.Id);
+        foreach (var label in labelItems)
+            label.LinkedInventoryItemId = null;
         
         _context.InventoryItems.Remove(item);
         await _context.SaveChangesAsync(cancellationToken);

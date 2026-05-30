@@ -108,7 +108,8 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.Timestamp);
             entity.HasOne(e => e.LinkedInventoryItem)
                   .WithMany()
-                  .HasForeignKey(e => e.LinkedInventoryItemId);
+                  .HasForeignKey(e => e.LinkedInventoryItemId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
     }
 }
