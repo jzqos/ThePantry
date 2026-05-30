@@ -14,9 +14,10 @@ RUN dotnet publish -c Release -o /app/publish
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
-# Install SQLite native libraries (if needed)
+# Install SQLite and timezone data
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-0 \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/publish .

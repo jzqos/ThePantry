@@ -10,6 +10,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
       - PASSWORD=${PASSWORD}
+      - TZ=${TZ:-Europe/Zurich}
     volumes:
       - ./data:/db
       - ./data/uploads:/uploads
