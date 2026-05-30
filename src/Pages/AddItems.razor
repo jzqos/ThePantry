@@ -54,7 +54,28 @@
 
             <div id="reader" style="width: 100%; max-width: 600px; margin: 0 auto; border-radius: 8px; overflow: hidden;"></div>
 
-            @if (lastScannedUpc != null && labelRecognitionAvailable)
+            @* Scan confirmation card — shown after every successful scan *@
+            @if (lastQueuedItemId.HasValue)
+            {
+                <div class="card border-success mt-3">
+                    <div class="card-body py-2 px-3">
+                        <div class="fw-semibold mb-1">
+                            <span class="oi oi-check text-success me-1"></span>
+                            Queued: <code>@lastScannedUpc</code> → <strong>@selectedCategory</strong>
+                        </div>
+                        <div class="d-flex gap-2 mt-2">
+                            <button class="btn btn-success btn-sm flex-grow-1" @onclick="ConfirmScan">
+                                <span class="oi oi-check me-1"></span> OK
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm flex-grow-1" @onclick="RetryScan">
+                                <span class="oi oi-reload me-1"></span> Wrong item — retry
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            @if (lastScannedUpc != null && labelRecognitionAvailable && !lastQueuedItemId.HasValue)
             {
                 <div class="card border-warning mt-3">
                     <div class="card-body py-2 px-3">
@@ -222,9 +243,13 @@ else if (activeTab == "csv")
 
     private string selectedCategory = "Pantry";
 
+    // Scan confirmation card state
+    private int? lastQueuedItemId;      // ScanQueueItem.Id of most recent scan
+    private bool isScanning = false;    // blocks HandleBarcodeDetected while card is showing
+
     // Front-photo card state
     private string? lastScannedUpc;
-    private string? lastBarcodeSideImage; // captured at scan time
+    private string? lastBarcodeSideImage;
     private bool labelRecognitionAvailable;
     private bool frontPhotoAdded;
     private bool capturingFrontPhoto;
@@ -320,27 +345,56 @@ else if (activeTab == "csv")
     [JSInvokable]
     public async Task HandleBarcodeDetected(string code, string? imageData)
     {
+        // Block while showing confirmation card for the previous scan
+        if (isScanning || lastQueuedItemId.HasValue) return;
+        isScanning = true;
+
         try
         {
             Logger.LogInformation("Barcode detected: {Code}", code);
-            await Mediator.Send(new QueueScanCommand(code, ImageData: imageData, Category: selectedCategory));
-            await ToastService.ShowSuccess($"Scanned: {code}");
+            var queued = await Mediator.Send(new QueueScanCommand(code, ImageData: imageData, Category: selectedCategory));
 
-            // Store for front-photo card (only show when LLM is configured)
-            if (labelRecognitionAvailable)
-            {
-                lastScannedUpc = code;
-                lastBarcodeSideImage = imageData;
-                frontPhotoAdded = false;
-            }
+            lastScannedUpc = code;
+            lastBarcodeSideImage = imageData;
+            frontPhotoAdded = false;
+            lastQueuedItemId = queued.Id;   // show confirmation card
 
             await LoadRecentScans();
-            await InvokeAsync(StateHasChanged);
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error processing scanned barcode");
+            await ToastService.ShowError("Failed to queue scan.");
         }
+        finally
+        {
+            isScanning = false;
+        }
+
+        if (lastQueuedItemId.HasValue)
+            try { await JS.InvokeVoidAsync("barcodeScanner.pauseScanning"); } catch { }
+
+        StateHasChanged();
+    }
+
+    private async Task ConfirmScan()
+    {
+        lastQueuedItemId = null;
+        StateHasChanged();
+        try { await JS.InvokeVoidAsync("barcodeScanner.resetCooldown"); } catch { }
+    }
+
+    private async Task RetryScan()
+    {
+        var id = lastQueuedItemId;
+        lastQueuedItemId = null;
+        StateHasChanged();
+
+        // Delete the queued scan item so it doesn't get processed
+        if (id.HasValue)
+            try { await Mediator.Send(new DeleteScanCommand(id.Value)); } catch { }
+
+        try { await JS.InvokeVoidAsync("barcodeScanner.resetCooldown"); } catch { }
     }
 
     private async Task CaptureFrontPhoto()
@@ -380,8 +434,12 @@ else if (activeTab == "csv")
 
     private void DismissFrontPhotoCard()
     {
-        lastScannedUpc = null;
-        frontPhotoAdded = false;
+        // Only clear when the confirm card is also gone
+        if (!lastQueuedItemId.HasValue)
+        {
+            lastScannedUpc = null;
+            frontPhotoAdded = false;
+        }
     }
     
     private async Task LoadRecentScans()

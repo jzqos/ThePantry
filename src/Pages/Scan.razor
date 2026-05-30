@@ -300,8 +300,9 @@
     [JSInvokable]
     public async Task HandleBarcodeDetected(string code, string? imageData)
     {
-        if (isProcessing) return;
-        await InvokeAsync(() => ProcessUpc(code));
+        // Block while processing AND while showing a result card waiting for user confirmation
+        if (isProcessing || lastProcessedItem != null) return;
+        await ProcessUpc(code);
     }
 
     private async Task HandleKeyUp(KeyboardEventArgs e)
@@ -324,10 +325,9 @@
         isProcessing = true;
         StateHasChanged();
 
+        ThePantry.Domain.InventoryItem? result = null;
         try
         {
-            ThePantry.Domain.InventoryItem? result = null;
-
             switch (CurrentMode)
             {
                 case "add":
@@ -336,47 +336,43 @@
                     {
                         if (labelRecognitionAvailable)
                         {
+                            isProcessing = false;
                             await EnqueueLabelScan(upc, result);
                             return;
                         }
                         else
                         {
+                            isProcessing = false;
                             await PromptLabelRecognitionManual(upc, result);
                             return;
                         }
                     }
                     await ToastService.ShowSuccess($"Added {result.Name}");
-                    lastQueuedItemId = null; // clear front-photo card when a new item is successfully added
+                    lastQueuedItemId = null;
                     break;
                 case "open":
                     result = await Mediator.Send(new MarkAsOpenedByScannerCommand(upc));
-                    await ToastService.ShowInfo($"Updated {result?.Name}");
+                    await ToastService.ShowInfo($"Opened {result?.Name}");
                     break;
                 case "use":
                     result = await Mediator.Send(new DecrementInventoryByScannerCommand(upc));
                     await ToastService.ShowWarning($"Used {result?.Name}");
                     break;
             }
-
-            lastProcessedItem = result;
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error processing UPC {Upc} in mode {Mode}", upc, CurrentMode);
             await ToastService.ShowError("Failed to process item.");
-        }
-        finally
-        {
-            isProcessing = false;
-            await InvokeAsync(StateHasChanged);
+            result = null;
         }
 
-        // Pause after the render so the card is visible before we stop the scan loop
-        if (lastProcessedItem != null)
-        {
-            try { await JS.InvokeVoidAsync("barcodeScanner.pauseScanning"); }
-            catch { /* scanner may already be stopped */ }
-        }
+        isProcessing = false;
+        lastProcessedItem = result;   // card now blocks HandleBarcodeDetected via the null check
+        StateHasChanged();
+
+        if (result != null)
+            try { await JS.InvokeVoidAsync("barcodeScanner.pauseScanning"); } catch { }
     }
 
     private async Task EnqueueLabelScan(string upc, ThePantry.Domain.InventoryItem? placeholderItem)
@@ -505,16 +501,16 @@
 
     private async Task ConfirmScan()
     {
-        lastProcessedItem = null;
-        try { await JS.InvokeVoidAsync("barcodeScanner.resetCooldown"); }
-        catch { /* scanner may be stopped */ }
-        await InvokeAsync(StateHasChanged);
+        lastProcessedItem = null;   // clears the gate in HandleBarcodeDetected
+        StateHasChanged();
+        try { await JS.InvokeVoidAsync("barcodeScanner.resetCooldown"); } catch { }
     }
 
     private async Task RetryScan()
     {
         var item = lastProcessedItem;
         lastProcessedItem = null;
+        StateHasChanged();
 
         // Undo the last action best-effort
         if (item != null)
@@ -525,9 +521,7 @@
                 try { await Mediator.Send(new IncrementInventoryCommand(item.Id)); } catch { }
         }
 
-        try { await JS.InvokeVoidAsync("barcodeScanner.resetCooldown"); }
-        catch { /* scanner may be stopped */ }
-        await InvokeAsync(StateHasChanged);
+        try { await JS.InvokeVoidAsync("barcodeScanner.resetCooldown"); } catch { }
     }
 
     public async ValueTask DisposeAsync()
