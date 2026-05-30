@@ -301,7 +301,7 @@
     public async Task HandleBarcodeDetected(string code, string? imageData)
     {
         if (isProcessing) return;
-        await ProcessUpc(code);
+        await InvokeAsync(() => ProcessUpc(code));
     }
 
     private async Task HandleKeyUp(KeyboardEventArgs e)
@@ -359,8 +359,6 @@
             }
 
             lastProcessedItem = result;
-            // Pause the scanner so the result card stays visible until user confirms
-            await JS.InvokeVoidAsync("barcodeScanner.pauseScanning");
         }
         catch (Exception ex)
         {
@@ -370,7 +368,14 @@
         finally
         {
             isProcessing = false;
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
+        }
+
+        // Pause after the render so the card is visible before we stop the scan loop
+        if (lastProcessedItem != null)
+        {
+            try { await JS.InvokeVoidAsync("barcodeScanner.pauseScanning"); }
+            catch { /* scanner may already be stopped */ }
         }
     }
 
@@ -501,27 +506,28 @@
     private async Task ConfirmScan()
     {
         lastProcessedItem = null;
-        // Resume the scanner cooldown so the next item can be scanned immediately
-        await JS.InvokeVoidAsync("barcodeScanner.resetCooldown");
-        StateHasChanged();
+        try { await JS.InvokeVoidAsync("barcodeScanner.resetCooldown"); }
+        catch { /* scanner may be stopped */ }
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task RetryScan()
     {
-        // Undo the last action if possible, then clear the result
-        if (lastProcessedItem != null && CurrentMode == "add")
-        {
-            try { await Mediator.Send(new DecrementInventoryCommand(lastProcessedItem.Id)); }
-            catch { /* best effort */ }
-        }
-        else if (lastProcessedItem != null && CurrentMode == "use")
-        {
-            try { await Mediator.Send(new IncrementInventoryCommand(lastProcessedItem.Id)); }
-            catch { /* best effort */ }
-        }
+        var item = lastProcessedItem;
         lastProcessedItem = null;
-        await JS.InvokeVoidAsync("barcodeScanner.resetCooldown");
-        StateHasChanged();
+
+        // Undo the last action best-effort
+        if (item != null)
+        {
+            if (CurrentMode == "add")
+                try { await Mediator.Send(new DecrementInventoryCommand(item.Id)); } catch { }
+            else if (CurrentMode == "use")
+                try { await Mediator.Send(new IncrementInventoryCommand(item.Id)); } catch { }
+        }
+
+        try { await JS.InvokeVoidAsync("barcodeScanner.resetCooldown"); }
+        catch { /* scanner may be stopped */ }
+        await InvokeAsync(StateHasChanged);
     }
 
     public async ValueTask DisposeAsync()

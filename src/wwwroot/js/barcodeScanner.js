@@ -145,8 +145,10 @@ window.barcodeScanner = {
 
     resetCooldown: function () {
         _paused = false;
-        lastScannedCode = "";
-        lastScannedTime = 0;
+        // Keep lastScannedCode so the same barcode still has a 2-second cooldown.
+        // Without this, pressing OK while the barcode is still in view immediately
+        // re-processes the same item.
+        lastScannedTime = Date.now();
     },
 
     stop: async function () {
