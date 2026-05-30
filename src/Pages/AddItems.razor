@@ -2,6 +2,7 @@
 @using MediatR
 @using ThePantry.Application.Commands
 @using ThePantry.Application.Queries
+@using ThePantry.Application.Services
 @using ThePantry.Services
 @using Microsoft.JSInterop
 @implements IAsyncDisposable
@@ -9,6 +10,8 @@
 @inject ILogger<AddItems> Logger
 @inject ToastService ToastService
 @inject IJSRuntime JS
+@inject AppSettingsService AppSettingsService
+@inject IConfiguration Configuration
 
 <PageTitle>Add Items - The Pantry</PageTitle>
 
@@ -37,7 +40,39 @@
     <div class="card">
         <div class="card-body">
             <div id="reader" style="width: 100%; max-width: 600px; margin: 0 auto; border-radius: 8px; overflow: hidden;"></div>
-            
+
+            @if (lastScannedUpc != null && labelRecognitionAvailable)
+            {
+                <div class="card border-warning mt-3">
+                    <div class="card-body py-2 px-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="fw-semibold text-warning-emphasis">
+                                <span class="oi oi-camera me-1"></span> Add front label photo
+                            </span>
+                            <button type="button" class="btn-close btn-sm" @onclick="DismissFrontPhotoCard"></button>
+                        </div>
+                        <p class="small text-muted mb-2">
+                            Last scanned: <code>@lastScannedUpc</code><br/>
+                            Point the camera at the <strong>front of the product</strong> and press the button.
+                        </p>
+                        @if (frontPhotoAdded)
+                        {
+                            <div class="alert alert-success py-1 small mb-0">Front photo attached — the label will be recognized automatically.</div>
+                        }
+                        else
+                        {
+                            <button class="btn btn-warning btn-sm w-100" @onclick="CaptureFrontPhoto" disabled="@capturingFrontPhoto">
+                                @if (capturingFrontPhoto)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1"></span>
+                                }
+                                <span class="oi oi-camera me-1"></span> Capture front label photo
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+
             <div class="mt-3">
                 <div class="row g-2">
                     <div class="col-10">
@@ -97,9 +132,13 @@ else if (activeTab == "manual")
                     <div class="col-md-6">
                         <label class="form-label">Category</label>
                         <InputSelect class="form-select" @bind-Value="manualItem.Category">
-                            <option value="Pantry">Pantry</option>
-                            <option value="Refrigerator">Refrigerator</option>
-                            <option value="Freezer">Freezer</option>
+                            @if (availableCategories != null)
+                            {
+                                @foreach (var cat in availableCategories)
+                                {
+                                    <option value="@cat">@cat</option>
+                                }
+                            }
                         </InputSelect>
                     </div>
                     <div class="col-12">
@@ -167,6 +206,13 @@ else if (activeTab == "csv")
     private List<ScanQueueItemDto> recentScans = new();
     private DotNetObjectReference<AddItems>? objRef;
     private bool isScannerRunning = false;
+
+    // Front-photo card state
+    private string? lastScannedUpc;
+    private string? lastBarcodeSideImage; // captured at scan time
+    private bool labelRecognitionAvailable;
+    private bool frontPhotoAdded;
+    private bool capturingFrontPhoto;
     
     private async Task SetTabManual()
     {
@@ -199,9 +245,14 @@ else if (activeTab == "csv")
         public string? Skus { get; set; }
     }
     
+    private List<string>? availableCategories;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadRecentScans();
+        var provider = await AppSettingsService.GetAsync("LLM_PROVIDER");
+        labelRecognitionAvailable = !string.IsNullOrWhiteSpace(provider);
+        availableCategories = await Mediator.Send(new GetCategoriesQuery());
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -258,6 +309,15 @@ else if (activeTab == "csv")
             Logger.LogInformation("Barcode detected: {Code}", code);
             await Mediator.Send(new QueueScanCommand(code, ImageData: imageData));
             await ToastService.ShowSuccess($"Scanned: {code}");
+
+            // Store for front-photo card (only show when LLM is configured)
+            if (labelRecognitionAvailable)
+            {
+                lastScannedUpc = code;
+                lastBarcodeSideImage = imageData;
+                frontPhotoAdded = false;
+            }
+
             await LoadRecentScans();
             await InvokeAsync(StateHasChanged);
         }
@@ -265,6 +325,47 @@ else if (activeTab == "csv")
         {
             Logger.LogError(ex, "Error processing scanned barcode");
         }
+    }
+
+    private async Task CaptureFrontPhoto()
+    {
+        if (lastScannedUpc == null) return;
+        capturingFrontPhoto = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var frontImage = await JS.InvokeAsync<string?>("barcodeScanner.captureFrame", "reader");
+            if (string.IsNullOrWhiteSpace(frontImage))
+            {
+                await ToastService.ShowError("Could not capture image. Try again.");
+                return;
+            }
+
+            var storagePath = Configuration["ScanStoragePath"] ?? "uploads/scans";
+
+            await Mediator.Send(new QueueLabelScanWithFrontPhotoCommand(
+                lastScannedUpc, lastBarcodeSideImage, frontImage, storagePath));
+
+            frontPhotoAdded = true;
+            await ToastService.ShowSuccess("Front photo captured — label will be recognized automatically.");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error capturing front label photo");
+            await ToastService.ShowError("Failed to capture photo.");
+        }
+        finally
+        {
+            capturingFrontPhoto = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void DismissFrontPhotoCard()
+    {
+        lastScannedUpc = null;
+        frontPhotoAdded = false;
     }
     
     private async Task LoadRecentScans()

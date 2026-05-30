@@ -25,6 +25,10 @@ public class QueueScanHandler : IRequestHandler<QueueScanCommand, ScanQueueItem>
     
     public async Task<ScanQueueItem> Handle(QueueScanCommand request, CancellationToken cancellationToken)
     {
+        // Reject garbage barcode reads (control characters, too short)
+        if (!IsValidBarcode(request.Upc))
+            return new ScanQueueItem { Upc = request.Upc, Status = ScanStatus.Failed, Timestamp = DateTime.UtcNow };
+
         // Check for recent duplicate scans (within last 5 seconds) to prevent double-queuing
         var recentScan = await _context.ScanQueueItems
             .Where(s => s.Upc == request.Upc && s.Timestamp > DateTime.UtcNow.AddSeconds(-1))
@@ -40,38 +44,25 @@ public class QueueScanHandler : IRequestHandler<QueueScanCommand, ScanQueueItem>
         {
             try
             {
-                var base64Data = request.ImageData;
-                if (base64Data.Contains(","))
-                {
-                    base64Data = base64Data.Split(',')[1];
-                }
-                
+                var base64Data = request.ImageData.Contains(',')
+                    ? request.ImageData.Split(',')[1]
+                    : request.ImageData;
+
                 var bytes = Convert.FromBase64String(base64Data);
-                var fileName = $"scan_{Guid.NewGuid()}.jpg";
-                var storagePath = _configuration["ScanStoragePath"] ?? "wwwroot/uploads/scans";
-                
+                var fileName = $"scan_{Guid.NewGuid():N}.jpg";
+                var storagePath = _configuration["ScanStoragePath"] ?? "/uploads/scans";
+
                 if (!Directory.Exists(storagePath))
-                {
                     Directory.CreateDirectory(storagePath);
-                }
-                
-                var filePath = Path.Combine(storagePath, fileName);
-                await File.WriteAllBytesAsync(filePath, bytes, cancellationToken);
-                
-                // If it's in wwwroot, we want the relative web path
-                if (storagePath.Contains("wwwroot"))
-                {
-                    var relativePath = storagePath.Split("wwwroot").Last().Replace("\\", "/").Trim('/');
-                    imagePath = $"/{relativePath}/{fileName}";
-                }
-                else
-                {
-                    imagePath = filePath; // Fallback or handle external storage differently if needed
-                }
+
+                await File.WriteAllBytesAsync(Path.Combine(storagePath, fileName), bytes, cancellationToken);
+
+                // Always store a URL-style path so it can be served and resolved consistently
+                imagePath = $"/uploads/scans/{fileName}";
             }
             catch (Exception)
             {
-                // Log error or handle silently
+                // image capture is best-effort; continue without it
             }
         }
 
@@ -93,5 +84,16 @@ public class QueueScanHandler : IRequestHandler<QueueScanCommand, ScanQueueItem>
         await _context.SaveChangesAsync(cancellationToken);
         
         return scanItem;
+    }
+
+    // Reject clearly invalid reads: too short, or contains non-printable ASCII
+    private static bool IsValidBarcode(string code)
+    {
+        if (string.IsNullOrWhiteSpace(code) || code.Length < 4) return false;
+        foreach (var c in code)
+            if (c < 0x20 || c > 0x7E) return false; // non-printable or non-ASCII
+        // Reject if more than half the characters are non-alphanumeric (e.g. "*;/& &R")
+        var alphanumCount = code.Count(char.IsLetterOrDigit);
+        return alphanumCount >= code.Length / 2;
     }
 }

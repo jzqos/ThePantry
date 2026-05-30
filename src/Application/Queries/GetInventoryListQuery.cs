@@ -40,6 +40,8 @@ public class InventoryItemDto
     public List<string> Skus { get; set; } = new();
     public bool IsBelowThreshold => OnHandCount < MinimumThreshold;
     public int Deficit => Math.Max(0, MinimumThreshold - OnHandCount);
+    // Items with shelf life > 30 days (e.g. frozen/extended) get a reminder warning
+    public bool HasExtendedShelfLife => ShelfLifeDays > 30;
     public DateTime ExpiryDate { get; set; }
     public List<StockEntryDto> StockEntries { get; set; } = new();
 }
@@ -91,12 +93,15 @@ public class GetInventoryListHandler : IRequestHandler<GetInventoryListQuery, In
                 "category" => request.SortDescending ? query.OrderByDescending(i => i.Category) : query.OrderBy(i => i.Category),
                 "onhand" => request.SortDescending ? query.OrderByDescending(i => i.StockEntries.Count) : query.OrderBy(i => i.StockEntries.Count),
                 "min" => request.SortDescending ? query.OrderByDescending(i => i.MinimumThreshold) : query.OrderBy(i => i.MinimumThreshold),
-                _ => query.OrderBy(i => i.Name)
+                // Extended shelf life items first (reminder to use them), then by expiry date
+                "warning" => query.OrderByDescending(i => i.ShelfLifeDays > 30).ThenBy(i => i.CreatedDate),
+                _ => query.OrderByDescending(i => i.ShelfLifeDays > 30).ThenBy(i => i.Name)
             };
         }
         else
         {
-            query = query.OrderBy(i => i.Name);
+            // Default: extended shelf life items first as a reminder, then alphabetical
+            query = query.OrderByDescending(i => i.ShelfLifeDays > 30).ThenBy(i => i.Name);
         }
         
         var items = await query

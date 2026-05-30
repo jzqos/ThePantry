@@ -43,8 +43,15 @@ builder.Services.AddHttpClient<IProductLookupService, OpenFoodFactsLookupService
 // Toast Service
 builder.Services.AddScoped<ToastService>();
 
+// App settings and label recognition
+builder.Services.AddScoped<ThePantry.Application.Services.AppSettingsService>();
+builder.Services.AddScoped<ThePantry.Application.Services.AnthropicLabelRecognitionService>();
+builder.Services.AddScoped<ThePantry.Application.Services.OpenAiCompatibleLabelRecognitionService>();
+builder.Services.AddScoped<ThePantry.Application.Services.ILabelRecognitionService, ThePantry.Application.Services.LabelRecognitionDispatcher>();
+
 // Background service for scan processing
 builder.Services.AddHostedService<ScanProcessingHostedService>();
+builder.Services.AddHostedService<ThePantry.Services.LabelProcessingHostedService>();
 
 var app = builder.Build();
 

@@ -114,10 +114,40 @@ public class ScanProcessingHostedService : BackgroundService
                 }
                 else
                 {
-                    // Product not found
-                    scanItem.Status = ScanStatus.Failed;
+                    // Product not found — if LLM is configured, promote to label recognition queue
+                    var appSettings = scope.ServiceProvider.GetRequiredService<ThePantry.Application.Services.AppSettingsService>();
+                    var llmProvider = await appSettings.GetAsync("LLM_PROVIDER", cancellationToken);
+
+                    if (!string.IsNullOrWhiteSpace(llmProvider))
+                    {
+                        // Check no LabelQueueItem already exists for this UPC
+                        var alreadyQueued = await context.LabelQueueItems
+                            .AnyAsync(q => q.Upc == scanItem.Upc
+                                && (q.Status == LabelScanStatus.Pending || q.Status == LabelScanStatus.Processing),
+                                cancellationToken);
+
+                        if (!alreadyQueued)
+                        {
+                            context.LabelQueueItems.Add(new LabelQueueItem
+                            {
+                                Upc = scanItem.Upc,
+                                ImagePath = scanItem.ImagePath, // reuse barcode-side image
+                                Category = "Pantry",
+                                Status = LabelScanStatus.Pending,
+                                Timestamp = DateTime.UtcNow
+                            });
+                            // Don't delete the scan image — LabelProcessingHostedService will clean it up
+                            scanItem.ImagePath = null;
+                            _logger.LogInformation("UPC {Upc} not in OpenFoodFacts — promoted to label recognition queue", scanItem.Upc);
+                        }
+                        scanItem.Status = ScanStatus.Failed; // still mark failed so ScanMonitor shows it, but label queue picks it up
+                    }
+                    else
+                    {
+                        scanItem.Status = ScanStatus.Failed;
+                    }
                 }
-                
+
                 await context.SaveChangesAsync(cancellationToken);
                 _logger.LogInformation("Processed scan for UPC {Upc}: {Status}", scanItem.Upc, scanItem.Status);
             }

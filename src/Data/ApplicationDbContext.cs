@@ -15,7 +15,10 @@ public class ApplicationDbContext : DbContext
     public DbSet<ProductSku> ProductSkus { get; set; } = null!;
     public DbSet<UsageHistory> UsageHistories { get; set; } = null!;
     public DbSet<ScanQueueItem> ScanQueueItems { get; set; } = null!;
-    
+    public DbSet<StoredCategory> Categories { get; set; } = null!;
+    public DbSet<AppSetting> AppSettings { get; set; } = null!;
+    public DbSet<LabelQueueItem> LabelQueueItems { get; set; } = null!;
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -73,6 +76,39 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.ProductDescription).HasMaxLength(1000);
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.Upc);
+        });
+
+        modelBuilder.Entity<StoredCategory>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+            entity.HasIndex(e => e.Name).IsUnique();
+        });
+
+        modelBuilder.Entity<AppSetting>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Key).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Value).HasMaxLength(2000);
+            entity.HasIndex(e => e.Key).IsUnique();
+        });
+
+        modelBuilder.Entity<LabelQueueItem>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Upc).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Category).HasMaxLength(100);
+            entity.Property(e => e.ImagePath).HasMaxLength(500);
+            entity.Property(e => e.ImagePath2).HasMaxLength(500);
+            entity.Property(e => e.ResultName).HasMaxLength(200);
+            entity.Property(e => e.ResultSpecies).HasMaxLength(100);
+            entity.Property(e => e.ResultWeight).HasMaxLength(50);
+            entity.Property(e => e.ErrorMessage).HasMaxLength(500);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.Timestamp);
+            entity.HasOne(e => e.LinkedInventoryItem)
+                  .WithMany()
+                  .HasForeignKey(e => e.LinkedInventoryItemId);
         });
     }
 }

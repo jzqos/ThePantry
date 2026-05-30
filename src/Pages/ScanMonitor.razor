@@ -2,6 +2,7 @@
 @using MediatR
 @using ThePantry.Application.Commands
 @using ThePantry.Application.Queries
+@using ThePantry.Domain
 @using ThePantry.Services
 @implements IDisposable
 @inject IMediator Mediator
@@ -48,9 +49,82 @@ else
                 Needs Review (@failedScans.Count)
             </button>
         </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link @(activeTab == "labels" ? "active" : "")" @onclick="() => LoadLabelsTab()">
+                Label Recognition
+                @if (labelQueue.Any(q => q.Status == LabelScanStatus.Pending || q.Status == LabelScanStatus.Processing))
+                {
+                    <span class="badge bg-warning text-dark ms-1">@labelQueue.Count(q => q.Status == LabelScanStatus.Pending || q.Status == LabelScanStatus.Processing)</span>
+                }
+                else
+                {
+                    <span class="badge bg-secondary ms-1">@labelQueue.Count</span>
+                }
+            </button>
+        </li>
     </ul>
+
+    @if (activeTab == "labels")
+    {
+        @if (labelQueue.Any())
+        {
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>UPC</th>
+                            <th>Status</th>
+                            <th>Result</th>
+                            <th>Location</th>
+                            <th>Time</th>
+                            <th>Linked Item</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in labelQueue)
+                        {
+                            <tr>
+                                <td><code>@item.Upc</code></td>
+                                <td>
+                                    <span class="badge bg-@GetLabelStatusBadge(item.Status)">@item.Status</span>
+                                </td>
+                                <td>
+                                    @if (item.Status == LabelScanStatus.Complete && item.ResultName != null)
+                                    {
+                                        <strong>@item.ResultName</strong>
+                                        @if (item.ResultSpecies != null) { <span class="text-muted ms-1">(@item.ResultSpecies)</span> }
+                                        @if (item.ResultWeight != null) { <span class="badge bg-light text-dark ms-1">@item.ResultWeight</span> }
+                                    }
+                                    else if (item.Status == LabelScanStatus.Failed)
+                                    {
+                                        <span class="text-danger small">@(item.ErrorMessage ?? "Recognition failed")</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted">Processing...</span>
+                                    }
+                                </td>
+                                <td>@(item.Category ?? "—")</td>
+                                <td class="small text-muted">@item.Timestamp.ToLocalTime().ToString("g")</td>
+                                <td>
+                                    @if (item.LinkedInventoryItemId.HasValue)
+                                    {
+                                        <a href="inventory/details/@item.LinkedInventoryItemId" class="btn btn-sm btn-outline-info">View</a>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else
+        {
+            <div class="alert alert-info">No label recognition scans yet.</div>
+        }
+    }
     
-    @if (displayedScans.Any())
+    @if (activeTab != "labels" && displayedScans.Any())
     {
         <div class="table-responsive">
             <table class="table table-striped">
@@ -124,7 +198,7 @@ else
             </table>
         </div>
     }
-    else
+    else if (activeTab != "labels")
     {
         <div class="alert alert-info">
             No scans in this category.
@@ -193,6 +267,7 @@ else
     private List<ScanQueueItemDto> pendingScans = new();
     private List<ScanQueueItemDto> failedScans = new();
     private List<ScanQueueItemDto> displayedScans = new();
+    private List<LabelQueueItemDto> labelQueue = new();
     private string activeTab = "all";
     private bool isLoading = true;
     private bool showReviewModal;
@@ -221,6 +296,7 @@ else
     private Task LoadAllTab() => LoadTab("all");
     private Task LoadPendingTab() => LoadTab("pending");
     private Task LoadFailedTab() => LoadTab("failed");
+    private Task LoadLabelsTab() => LoadTab("labels");
 
     private async Task LoadTab(string tab)
     {
@@ -236,7 +312,8 @@ else
             allScans = await Mediator.Send(new GetScanQueueQuery(), cts.Token);
             pendingScans = allScans.Where(s => s.Status == Domain.ScanStatus.Pending || s.Status == Domain.ScanStatus.Processing).ToList();
             failedScans = allScans.Where(s => s.Status == Domain.ScanStatus.Failed).ToList();
-            
+            labelQueue = await Mediator.Send(new GetLabelQueueQuery(), cts.Token);
+
             displayedScans = activeTab switch
             {
                 "pending" => pendingScans,
@@ -351,17 +428,21 @@ else
         cts.Dispose();
     }
     
-    private string GetStatusBadge(Domain.ScanStatus status)
+    private string GetStatusBadge(Domain.ScanStatus status) => status switch
     {
-        if (status == Domain.ScanStatus.Pending)
-            return "secondary";
-        else if (status == Domain.ScanStatus.Processing)
-            return "info";
-        else if (status == Domain.ScanStatus.Complete)
-            return "success";
-        else if (status == Domain.ScanStatus.Failed)
-            return "danger";
-        else
-            return "secondary";
-    }
+        Domain.ScanStatus.Pending => "secondary",
+        Domain.ScanStatus.Processing => "info",
+        Domain.ScanStatus.Complete => "success",
+        Domain.ScanStatus.Failed => "danger",
+        _ => "secondary"
+    };
+
+    private string GetLabelStatusBadge(LabelScanStatus status) => status switch
+    {
+        LabelScanStatus.Pending => "secondary",
+        LabelScanStatus.Processing => "warning",
+        LabelScanStatus.Complete => "success",
+        LabelScanStatus.Failed => "danger",
+        _ => "secondary"
+    };
 }

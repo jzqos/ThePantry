@@ -1,0 +1,16 @@
+services:
+  thepantry:
+    image: thepantry:latest
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    ports:
+      - "8999:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - PASSWORD=${PASSWORD}
+    volumes:
+      - ./data:/db
+      - ./data/uploads:/uploads
+    restart: unless-stopped

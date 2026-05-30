@@ -2,6 +2,8 @@
 @page "/scan/{Mode}"
 @using MediatR
 @using ThePantry.Application.Commands
+@using ThePantry.Application.Queries
+@using ThePantry.Application.Services
 @using ThePantry.Services
 @using Microsoft.JSInterop
 @implements IAsyncDisposable
@@ -10,6 +12,9 @@
 @inject ToastService ToastService
 @inject IJSRuntime JS
 @inject NavigationManager NavigationManager
+@inject ILabelRecognitionService LabelRecognition
+@inject AppSettingsService AppSettingsService
+@inject IConfiguration Configuration
 
 <PageTitle>Scan - The Pantry</PageTitle>
 
@@ -31,6 +36,22 @@
                 </div>
             </div>
 
+            @if (CurrentMode == "add")
+            {
+                <div class="mb-3">
+                    <label class="form-label fw-semibold mb-1">Scan into location</label>
+                    <select class="form-select" @bind="selectedCategory">
+                        @if (availableCategories != null)
+                        {
+                            @foreach (var cat in availableCategories)
+                            {
+                                <option value="@cat">@cat</option>
+                            }
+                        }
+                    </select>
+                </div>
+            }
+
             <div class="scanner-container position-relative bg-dark rounded overflow-hidden mb-3" style="min-height: 300px;">
                 <div id="reader" style="width: 100%;"></div>
                 @if (isProcessing)
@@ -50,6 +71,37 @@
                 </button>
             </div>
 
+            @if (lastQueuedItemId.HasValue)
+            {
+                <div class="card border-warning mb-3 animate-fade-in">
+                    <div class="card-body py-2 px-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="fw-semibold text-warning-emphasis">
+                                <span class="oi oi-camera me-1"></span> Add front label photo
+                            </span>
+                            <button type="button" class="btn-close btn-sm" @onclick="DismissFrontPhotoCard"></button>
+                        </div>
+                        <p class="small text-muted mb-2">
+                            Point the camera at the <strong>front of the product</strong> where the name is printed, then press the button.
+                        </p>
+                        @if (frontPhotoAdded)
+                        {
+                            <div class="alert alert-success py-1 small mb-0">Front photo added — will be included in recognition.</div>
+                        }
+                        else
+                        {
+                            <button class="btn btn-warning btn-sm w-100" @onclick="CaptureFrontPhoto" disabled="@capturingFrontPhoto">
+                                @if (capturingFrontPhoto)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1"></span>
+                                }
+                                <span class="oi oi-camera me-1"></span> Capture front label photo
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+
             @if (lastProcessedItem != null)
             {
                 <div class="alert @GetAlertClass() d-flex align-items-center animate-fade-in">
@@ -66,7 +118,7 @@
                     <div>
                         <div class="fw-bold">@lastProcessedItem.Name</div>
                         <div class="small">
-                            @if (CurrentMode == "add") { <span>Added! New count: @lastProcessedItem.OnHandCount</span> }
+                            @if (CurrentMode == "add") { <span>Added to @lastProcessedItem.Category! Count: @lastProcessedItem.OnHandCount</span> }
                             else if (CurrentMode == "open") { <span>Item status updated</span> }
                             else { <span>Used! Remaining: @lastProcessedItem.OnHandCount</span> }
                         </div>
@@ -76,6 +128,68 @@
         </div>
     </div>
 </div>
+
+<!-- Label recognition modal -->
+@if (showLabelModal)
+{
+    <div class="modal fade show" style="display:block" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Unknown Product — Label Recognition</h5>
+                    <button type="button" class="btn-close" @onclick="DismissLabelModal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">
+                        This barcode was not found in the product database (it may be a store-reduced item).
+                        Fill in the details below to add it to your inventory.
+                        To enable automatic label recognition via photo, add an Anthropic API key in Settings.
+                    </p>
+
+                    @if (labelError != null)
+                    {
+                        <div class="alert alert-warning small">@labelError</div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label">Product name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" @bind="labelName" placeholder="e.g. Chicken Breast" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Species / animal <span class="text-muted small">(optional)</span></label>
+                        <input type="text" class="form-control" @bind="labelSpecies" placeholder="e.g. Chicken" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Weight <span class="text-muted small">(optional)</span></label>
+                        <input type="text" class="form-control" @bind="labelWeight" placeholder="e.g. 500g" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Shelf life (days)</label>
+                        <input type="number" class="form-control" @bind="labelShelfLifeDays" min="1" max="90" />
+                        <div class="form-text">Use up to 90 days for frozen items.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Location</label>
+                        <select class="form-select" @bind="labelCategory">
+                            @if (availableCategories != null)
+                            {
+                                @foreach (var cat in availableCategories)
+                                {
+                                    <option value="@cat">@cat</option>
+                                }
+                            }
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="DismissLabelModal">Cancel</button>
+                    <button class="btn btn-primary" @onclick="ConfirmLabelItem" disabled="@string.IsNullOrWhiteSpace(labelName)">Add to Inventory</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
 
 <style>
     .scanner-container #reader video {
@@ -101,6 +215,34 @@
     private ThePantry.Domain.InventoryItem? lastProcessedItem;
     private DotNetObjectReference<Scan>? objRef;
     private bool isScannerRunning = false;
+
+    private List<string>? availableCategories;
+    private string selectedCategory = "Pantry";
+
+    // Front-photo card state (shown after a label is queued)
+    private int? lastQueuedItemId;
+    private bool frontPhotoAdded = false;
+    private bool capturingFrontPhoto = false;
+
+    // Label recognition modal state
+    private bool showLabelModal = false;
+    private bool labelRecognitionAvailable = false;
+    private string? labelError;
+    private string pendingUpc = "";
+    private string labelName = "";
+    private string? labelSpecies;
+    private string? labelWeight;
+    private int labelShelfLifeDays = 30;
+    private string labelCategory = "Refrigerator";
+    private LabelRecognitionResult? labelResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        availableCategories = await Mediator.Send(new GetCategoriesQuery());
+        if (availableCategories.Any()) selectedCategory = availableCategories.First();
+        var provider = await AppSettingsService.GetAsync("LLM_PROVIDER");
+        labelRecognitionAvailable = !string.IsNullOrWhiteSpace(provider);
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -180,8 +322,22 @@
             switch (CurrentMode)
             {
                 case "add":
-                    result = await Mediator.Send(new IncrementInventoryByScannerCommand(upc));
+                    result = await Mediator.Send(new IncrementInventoryByScannerCommand(upc, 1, selectedCategory));
+                    if (result.Name.StartsWith("Unknown Product ("))
+                    {
+                        if (labelRecognitionAvailable)
+                        {
+                            await EnqueueLabelScan(upc, result);
+                            return;
+                        }
+                        else
+                        {
+                            await PromptLabelRecognitionManual(upc, result);
+                            return;
+                        }
+                    }
                     await ToastService.ShowSuccess($"Added {result.Name}");
+                    lastQueuedItemId = null; // clear front-photo card when a new item is successfully added
                     break;
                 case "open":
                     result = await Mediator.Send(new MarkAsOpenedByScannerCommand(upc));
@@ -205,6 +361,122 @@
             isProcessing = false;
             StateHasChanged();
         }
+    }
+
+    private async Task EnqueueLabelScan(string upc, ThePantry.Domain.InventoryItem? placeholderItem)
+    {
+        // Remove the placeholder item created by the scanner command
+        if (placeholderItem != null)
+        {
+            try { await Mediator.Send(new DeleteInventoryItemCommand(placeholderItem.Id)); }
+            catch { /* best effort */ }
+        }
+
+        // Capture current frame for the queue
+        string? imageData = null;
+        try { imageData = await JS.InvokeAsync<string?>("barcodeScanner.captureFrame", "reader"); }
+        catch { /* best effort */ }
+
+        var storagePath = Configuration["ScanStoragePath"] ?? "uploads/scans";
+        lastQueuedItemId = await Mediator.Send(new QueueLabelScanCommand(upc, imageData, selectedCategory, storagePath));
+        frontPhotoAdded = false;
+
+        await ToastService.ShowInfo($"Label queued ({upc}) — add a front photo or continue scanning!");
+        isProcessing = false;
+        StateHasChanged();
+    }
+
+    private async Task CaptureFrontPhoto()
+    {
+        if (!lastQueuedItemId.HasValue) return;
+        capturingFrontPhoto = true;
+        StateHasChanged();
+
+        try
+        {
+            var imageData = await JS.InvokeAsync<string?>("barcodeScanner.captureFrame", "reader");
+            if (string.IsNullOrWhiteSpace(imageData))
+            {
+                await ToastService.ShowError("Could not capture image. Try again.");
+                return;
+            }
+
+            var storagePath = Configuration["ScanStoragePath"] ?? "uploads/scans";
+            var ok = await Mediator.Send(new AppendLabelPhotoCommand(lastQueuedItemId.Value, imageData, storagePath));
+            if (ok)
+            {
+                frontPhotoAdded = true;
+                await ToastService.ShowSuccess("Front photo added — the item will be re-evaluated.");
+            }
+            else
+            {
+                await ToastService.ShowError("Could not attach photo. The queue item may have already been processed.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error capturing front label photo");
+            await ToastService.ShowError("Failed to capture photo.");
+        }
+        finally
+        {
+            capturingFrontPhoto = false;
+            StateHasChanged();
+        }
+    }
+
+    private void DismissFrontPhotoCard()
+    {
+        lastQueuedItemId = null;
+        frontPhotoAdded = false;
+    }
+
+    private async Task PromptLabelRecognitionManual(string upc, ThePantry.Domain.InventoryItem? placeholderItem)
+    {
+        // Remove the placeholder "Unknown Product" item that was auto-created
+        if (placeholderItem != null)
+        {
+            try { await Mediator.Send(new DeleteInventoryItemCommand(placeholderItem.Id)); }
+            catch { /* best effort */ }
+        }
+
+        pendingUpc = upc;
+        labelName = "";
+        labelSpecies = null;
+        labelWeight = null;
+        labelShelfLifeDays = 30;
+        labelCategory = selectedCategory;
+        labelResult = null;
+        labelError = null;
+        showLabelModal = true;
+        isProcessing = false;
+        StateHasChanged();
+    }
+
+    private async Task ConfirmLabelItem()
+    {
+        if (string.IsNullOrWhiteSpace(labelName)) return;
+
+        try
+        {
+            var result = await Mediator.Send(new AddItemFromLabelCommand(
+                pendingUpc, labelName.Trim(), labelSpecies?.Trim(), labelWeight?.Trim(), labelCategory, labelShelfLifeDays));
+            lastProcessedItem = result;
+            await ToastService.ShowSuccess($"Added {result.Name}");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error adding label item");
+            await ToastService.ShowError("Failed to add item.");
+        }
+
+        DismissLabelModal();
+    }
+
+    private void DismissLabelModal()
+    {
+        showLabelModal = false;
+        StateHasChanged();
     }
 
     private string GetAlertClass() => CurrentMode switch

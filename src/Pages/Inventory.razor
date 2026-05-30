@@ -7,6 +7,7 @@
 @inject IMediator Mediator
 @inject ToastService ToastService
 @inject IJSRuntime JSRuntime
+@inject NavigationManager NavigationManager
 
 <PageTitle>Inventory - The Pantry</PageTitle>
 
@@ -14,9 +15,26 @@
     <h1>Inventory</h1>
     @if (selectedItemIds.Any())
     {
-        <button class="btn btn-warning" @onclick="CombineSelectedItems" disabled="@(selectedItemIds.Count < 2)">
-            <span class="oi oi-layers"></span> Combine Selected (@selectedItemIds.Count)
-        </button>
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+            <span class="text-muted small">@selectedItemIds.Count selected</span>
+            <div class="input-group input-group-sm" style="width:auto;">
+                <select class="form-select form-select-sm" @bind="moveToCategory">
+                    @if (availableCategories != null)
+                    {
+                        @foreach (var cat in availableCategories)
+                        {
+                            <option value="@cat">@cat</option>
+                        }
+                    }
+                </select>
+                <button class="btn btn-sm btn-outline-secondary" @onclick="MoveSelectedItems">
+                    <span class="oi oi-move"></span> Move
+                </button>
+            </div>
+            <button class="btn btn-sm btn-warning" @onclick="CombineSelectedItems" disabled="@(selectedItemIds.Count < 2)">
+                <span class="oi oi-layers"></span> Combine
+            </button>
+        </div>
     }
 </div>
 
@@ -33,10 +51,14 @@
             </div>
             <div class="col-md-3">
                 <select class="form-select" @bind="selectedCategory">
-                    <option value="">All Categories</option>
-                    <option value="Pantry">Pantry</option>
-                    <option value="Refrigerator">Refrigerator</option>
-                    <option value="Freezer">Freezer</option>
+                    <option value="">All Locations</option>
+                    @if (availableCategories != null)
+                    {
+                        @foreach (var cat in availableCategories)
+                        {
+                            <option value="@cat">@cat</option>
+                        }
+                    }
                 </select>
             </div>
             <div class="col-md-2">
@@ -79,6 +101,9 @@ else
                             <input type="checkbox" class="form-check-input" @onchange="ToggleSelectAll" checked="@IsAllSelected" />
                         </th>
                         <th style="width: 60px;"></th>
+                        <th style="width:30px;cursor:pointer;" @onclick='() => Sort("warning")' title="Extended shelf life items">
+                            ⚠ @GetSortIcon("warning")
+                        </th>
                         <th @onclick='() => Sort("name")' style="cursor:pointer">
                             Name @GetSortIcon("name")
                         </th>
@@ -103,6 +128,12 @@ else
                                 <input type="checkbox" class="form-check-input" 
                                        checked="@selectedItemIds.Contains(item.Id)" 
                                        @onchange="@(e => ToggleItemSelection(item.Id, e.Value))" />
+                            </td>
+                            <td class="text-center align-middle" title="@(item.HasExtendedShelfLife ? $"Extended shelf life: {item.ShelfLifeDays} days" : "")">
+                                @if (item.HasExtendedShelfLife)
+                                {
+                                    <span style="font-size:1.1rem;" title="Extended shelf life (@item.ShelfLifeDays days) — don't forget this item">⚠️</span>
+                                }
                             </td>
                             <td class="text-center align-middle">
                                 <ThePantry.Shared.Components.ProductImage ImageUrl="@item.ImageUrl" Size="ThePantry.Shared.Components.ProductImage.ImageSize.Thumb" Style="width: 40px; height: 40px; object-fit: contain; border-radius: 4px;" />
@@ -178,11 +209,15 @@ else
                                 <InputText class="form-control" @bind-Value="editingItem.Name" />
                             </div>
                             <div class="mb-3">
-                                <label class="form-label">Category</label>
+                                <label class="form-label">Location / Category</label>
                                 <InputSelect class="form-select" @bind-Value="editingItem.Category">
-                                    <option value="Pantry">Pantry</option>
-                                    <option value="Refrigerator">Refrigerator</option>
-                                    <option value="Freezer">Freezer</option>
+                                    @if (availableCategories != null)
+                                    {
+                                        @foreach (var cat in availableCategories)
+                                        {
+                                            <option value="@cat">@cat</option>
+                                        }
+                                    }
                                 </InputSelect>
                             </div>
                             <div class="mb-3">
@@ -279,7 +314,7 @@ else
     private int totalPages = 1;
     private bool isLoading = true;
 
-    private string sortBy = "name";
+    private string sortBy = "warning";
     private bool sortDescending = false;
 
     private bool showEditModal = false;
@@ -287,6 +322,8 @@ else
     private bool showDeleteModal = false;
     private InventoryItemDto? itemToDelete;
     private List<int> selectedItemIds = new();
+    private List<string>? availableCategories;
+    private string moveToCategory = "Pantry";
 
     private bool IsAllSelected => inventoryItems != null && inventoryItems.Any() && inventoryItems.All(i => selectedItemIds.Contains(i.Id));
 
@@ -328,6 +365,23 @@ else
         }
     }
 
+    private async Task MoveSelectedItems()
+    {
+        if (!selectedItemIds.Any()) return;
+        try
+        {
+            await Mediator.Send(new MoveItemsToCategoryCommand(selectedItemIds.ToList(), moveToCategory));
+            await ToastService.ShowSuccess($"Moved {selectedItemIds.Count} item(s) to {moveToCategory}");
+            selectedItemIds.Clear();
+            await LoadInventory();
+        }
+        catch (Exception ex)
+        {
+            await ToastService.ShowError("Error moving items");
+            Console.WriteLine($"Error moving items: {ex.Message}");
+        }
+    }
+
     private async Task CombineSelectedItems()
     {
         if (selectedItemIds.Count < 2) return;
@@ -355,6 +409,8 @@ else
     
     protected override async Task OnInitializedAsync()
     {
+        availableCategories = await Mediator.Send(new ThePantry.Application.Queries.GetCategoriesQuery());
+        if (availableCategories.Any()) moveToCategory = availableCategories.First();
         await LoadInventory();
     }
     

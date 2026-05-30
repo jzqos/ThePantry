@@ -2,15 +2,19 @@
 @using ThePantry.Services
 @using MediatR
 @using ThePantry.Application.Commands
+@using ThePantry.Application.Queries
+@using ThePantry.Application.Services
 @inject ToastService ToastService
 @inject NavigationManager NavigationManager
 @inject IMediator Mediator
+@inject AppSettingsService AppSettingsService
 
 <PageTitle>Settings - The Pantry</PageTitle>
 
-<h1>Settings</h1>
+<h1 class="mb-4">Settings</h1>
 
-<div class="row">
+<div class="row g-4">
+
     <div class="col-md-6">
         <div class="card mb-4">
             <div class="card-header">
@@ -18,7 +22,7 @@
             </div>
             <div class="card-body">
                 <h6>Database Backup</h6>
-                <p class="text-muted small">Download a copy of your SQLite database file. This contains all your inventory, history, and scan data.</p>
+                <p class="text-muted small">Download a copy of your SQLite database file.</p>
                 <a href="/api/backup" class="btn btn-primary" target="_blank">
                     <span class="oi oi-cloud-download"></span> Download Backup
                 </a>
@@ -26,8 +30,7 @@
                 <hr />
 
                 <h6>Resync Inventory Data</h6>
-                <p class="text-muted small">Update existing inventory items with the latest information from the product lookup service. This will populate missing images and descriptions.</p>
-                <p class="text-muted small"><i>Due to API limits, resyncing is limited to 50 items per minute.</i></p>
+                <p class="text-muted small">Update existing inventory items with the latest information from the product lookup service. Limited to 50 items per minute.</p>
                 <button class="btn btn-secondary" @onclick="ResyncInventory" disabled="@isResyncing">
                     @if (isResyncing)
                     {
@@ -44,15 +47,13 @@
                 <hr />
 
                 <h6>Restore Data</h6>
-                <p class="text-muted small">To restore data, replace the <code>thepantry.db</code> file in the application root with your backup file and restart the application.</p>
+                <p class="text-muted small">To restore data, replace the <code>thepantry.db</code> file and restart the application.</p>
                 <div class="alert alert-warning">
                     <span class="oi oi-warning"></span> Manual restoration is currently required for safety.
                 </div>
             </div>
         </div>
-    </div>
 
-    <div class="col-md-6">
         <div class="card mb-4">
             <div class="card-header">
                 <h5 class="mb-0">About ThePantry</h5>
@@ -64,10 +65,232 @@
             </div>
         </div>
     </div>
+
+    <div class="col-md-6">
+        <!-- Storage Locations / Categories -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Storage Locations</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small">
+                    Locations appear as selectable categories in the scanner and inventory.
+                    The three defaults (Pantry, Refrigerator, Freezer) cannot be removed.
+                </p>
+                @if (categories != null)
+                {
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        @foreach (var cat in categories)
+                        {
+                            <span class="badge bg-secondary d-flex align-items-center gap-1" style="font-size:0.9rem;padding:0.4em 0.7em;">
+                                @cat
+                                @if (!defaultCategories.Contains(cat))
+                                {
+                                    <button type="button" class="btn-close btn-close-white ms-1" style="font-size:0.55rem;"
+                                            @onclick="() => DeleteCategory(cat)" title="Remove @cat"></button>
+                                }
+                            </span>
+                        }
+                    </div>
+                }
+                <div class="input-group">
+                    <input type="text" class="form-control" placeholder="e.g. Pantry Cellar" @bind="newCategoryName" @bind:event="oninput" @onkeyup="HandleCategoryKeyUp" />
+                    <button class="btn btn-primary" @onclick="AddCategory" disabled="@string.IsNullOrWhiteSpace(newCategoryName)">Add</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Label Recognition -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Label Recognition</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small">
+                    When a barcode is not found in the product database, the scanner photographs the label and uses AI to extract the product name, species, and weight.
+                    The photo is deleted immediately after recognition.
+                </p>
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">LLM Provider</label>
+                    <select class="form-select" @bind="llmProvider" @bind:after="OnProviderChanged">
+                        <option value="">— disabled —</option>
+                        <option value="anthropic">Anthropic (Claude)</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="ollama">Ollama (self-hosted)</option>
+                        <option value="llamacpp">llama.cpp (self-hosted)</option>
+                    </select>
+                </div>
+
+                @if (!string.IsNullOrEmpty(llmProvider))
+                {
+                    @if (NeedsApiKey)
+                    {
+                        <div class="mb-3">
+                            <label class="form-label">API Key</label>
+                            <div class="input-group">
+                                <input type="@(showApiKey ? "text" : "password")" class="form-control font-monospace"
+                                       placeholder="@ApiKeyPlaceholder" @bind="apiKey" />
+                                <button class="btn btn-outline-secondary" type="button" @onclick="() => showApiKey = !showApiKey">
+                                    @(showApiKey ? "Hide" : "Show")
+                                </button>
+                            </div>
+                        </div>
+                    }
+
+                    @if (NeedsEndpoint)
+                    {
+                        <div class="mb-3">
+                            <label class="form-label">Endpoint URL</label>
+                            <input type="text" class="form-control font-monospace" placeholder="@EndpointPlaceholder" @bind="llmEndpoint" />
+                            <div class="form-text">Leave blank to use the default: <code>@EndpointPlaceholder</code></div>
+                        </div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label">Model</label>
+                        <input type="text" class="form-control font-monospace" placeholder="@ModelPlaceholder" @bind="llmModel" />
+                        <div class="form-text">Leave blank to use the default: <code>@ModelPlaceholder</code></div>
+                    </div>
+
+                    <div class="small text-muted mb-3">@ProviderNote</div>
+                }
+
+                @if (llmSaved)
+                {
+                    <div class="alert alert-success py-2 small">Settings saved.</div>
+                }
+                <button class="btn btn-primary" @onclick="SaveLlmSettings" disabled="@string.IsNullOrEmpty(llmProvider)">Save</button>
+                @if (!string.IsNullOrEmpty(llmProvider))
+                {
+                    <button class="btn btn-outline-secondary ms-2" @onclick="DisableLlm">Disable</button>
+                }
+            </div>
+        </div>
+    </div>
+
 </div>
 
 @code {
     private bool isResyncing = false;
+    private List<string>? categories;
+    private string newCategoryName = "";
+    private string llmProvider = "";
+    private string apiKey = "";
+    private string llmModel = "";
+    private string llmEndpoint = "";
+    private bool showApiKey = false;
+    private bool llmSaved = false;
+
+    private static readonly HashSet<string> defaultCategories = new(StringComparer.OrdinalIgnoreCase)
+        { "Pantry", "Refrigerator", "Freezer" };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCategories();
+        llmProvider  = await AppSettingsService.GetAsync("LLM_PROVIDER")  ?? "";
+        apiKey       = await AppSettingsService.GetAsync("LLM_API_KEY")   ?? "";
+        llmModel     = await AppSettingsService.GetAsync("LLM_MODEL")     ?? "";
+        llmEndpoint  = await AppSettingsService.GetAsync("LLM_ENDPOINT")  ?? "";
+    }
+
+    private async Task LoadCategories()
+    {
+        categories = await Mediator.Send(new GetCategoriesQuery());
+    }
+
+    private async Task AddCategory()
+    {
+        if (string.IsNullOrWhiteSpace(newCategoryName)) return;
+        var result = await Mediator.Send(new AddCategoryCommand(newCategoryName.Trim()));
+        if (result)
+        {
+            await ToastService.ShowSuccess($"Category '{newCategoryName.Trim()}' added");
+            newCategoryName = "";
+            await LoadCategories();
+        }
+        else
+        {
+            await ToastService.ShowError("Category already exists or is invalid");
+        }
+    }
+
+    private async Task HandleCategoryKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await AddCategory();
+    }
+
+    private async Task DeleteCategory(string name)
+    {
+        await Mediator.Send(new DeleteCategoryCommand(name));
+        await ToastService.ShowInfo($"Category '{name}' removed");
+        await LoadCategories();
+    }
+
+    private void OnProviderChanged()
+    {
+        // Pre-fill defaults when switching provider so the user sees what will be used
+        llmModel    = "";
+        llmEndpoint = "";
+        llmSaved    = false;
+    }
+
+    private async Task SaveLlmSettings()
+    {
+        await AppSettingsService.SetAsync("LLM_PROVIDER", string.IsNullOrWhiteSpace(llmProvider) ? null : llmProvider);
+        await AppSettingsService.SetAsync("LLM_API_KEY",  string.IsNullOrWhiteSpace(apiKey)      ? null : apiKey.Trim());
+        await AppSettingsService.SetAsync("LLM_MODEL",    string.IsNullOrWhiteSpace(llmModel)    ? null : llmModel.Trim());
+        await AppSettingsService.SetAsync("LLM_ENDPOINT", string.IsNullOrWhiteSpace(llmEndpoint) ? null : llmEndpoint.Trim());
+        llmSaved = true;
+    }
+
+    private async Task DisableLlm()
+    {
+        llmProvider = "";
+        await AppSettingsService.SetAsync("LLM_PROVIDER", null);
+        llmSaved = false;
+        await ToastService.ShowInfo("Label recognition disabled");
+    }
+
+    // Computed helpers for the provider UI
+    private bool NeedsApiKey => llmProvider is "anthropic" or "openai" or "openrouter";
+    private bool NeedsEndpoint => llmProvider is "ollama" or "llamacpp";
+
+    private string ApiKeyPlaceholder => llmProvider switch
+    {
+        "anthropic"  => "sk-ant-...",
+        "openai"     => "sk-...",
+        "openrouter" => "sk-or-...",
+        _            => "API key"
+    };
+
+    private string ModelPlaceholder => llmProvider switch
+    {
+        "anthropic"  => "claude-haiku-4-5-20251001",
+        "openai"     => "gpt-4o-mini",
+        "openrouter" => "meta-llama/llama-3.2-11b-vision-instruct:free",
+        "ollama"     => "llava",
+        "llamacpp"   => "(auto-detected from server)",
+        _            => ""
+    };
+
+    private string EndpointPlaceholder => llmProvider switch
+    {
+        "ollama"   => "http://localhost:11434",
+        "llamacpp" => "http://localhost:8080",
+        _          => ""
+    };
+
+    private string ProviderNote => llmProvider switch
+    {
+        "anthropic"  => "Uses the Anthropic Messages API. Requires a paid API key.",
+        "openai"     => "Uses the OpenAI Chat Completions API. Vision requires gpt-4o or gpt-4o-mini.",
+        "openrouter" => "Routes to many providers. Free vision models are available (see openrouter.ai/models).",
+        "ollama"     => "Runs locally via Ollama. Use a vision-capable model such as llava, llava-phi3, or moondream.",
+        "llamacpp"   => "Connects to a running llama.cpp server. Load a vision model (e.g. llava-v1.6-mistral-7b.gguf).",
+        _            => ""
+    };
 
     private async Task ResyncInventory()
     {
