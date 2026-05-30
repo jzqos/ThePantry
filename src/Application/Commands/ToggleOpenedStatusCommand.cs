@@ -25,22 +25,29 @@ public class ToggleOpenedStatusHandler : IRequestHandler<ToggleOpenedStatusComma
         if (item == null || !item.StockEntries.Any())
             return null;
 
-        // If any items are opened, we want to "close" the most recently opened one.
-        // Otherwise, we want to "open" the oldest unopened one.
-        var entryToToggle = item.StockEntries.Any(s => s.IsOpened)
-            ? item.StockEntries
-                .Where(s => s.IsOpened)
-                .OrderByDescending(s => s.OpenedDate) // Most recently opened first
-                .FirstOrDefault()
-            : item.StockEntries
-                .Where(s => !s.IsOpened)
-                .OrderBy(s => s.AddedDate) // Oldest unopened first
-                .FirstOrDefault();
-
-        if (entryToToggle != null)
+        if (item.StockEntries.Any(s => s.IsOpened))
         {
-            entryToToggle.IsOpened = !entryToToggle.IsOpened;
-            entryToToggle.OpenedDate = entryToToggle.IsOpened ? DateTime.UtcNow : null;
+            // Close: remove the most recently opened unit entirely (it's been consumed)
+            var toClose = item.StockEntries
+                .Where(s => s.IsOpened)
+                .OrderByDescending(s => s.OpenedDate)
+                .First();
+            _context.StockEntries.Remove(toClose);
+        }
+        else
+        {
+            // Open: remove the oldest sealed unit and replace it with an opened one
+            var toOpen = item.StockEntries
+                .Where(s => !s.IsOpened)
+                .OrderBy(s => s.AddedDate)
+                .First();
+            _context.StockEntries.Remove(toOpen);
+            _context.StockEntries.Add(new StockEntry
+            {
+                InventoryItemId = item.Id,
+                IsOpened = true,
+                OpenedDate = DateTime.UtcNow
+            });
         }
 
         item.LastModifiedDate = DateTime.UtcNow;

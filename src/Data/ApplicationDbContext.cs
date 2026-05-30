@@ -74,6 +74,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.RawData).HasMaxLength(500);
             entity.Property(e => e.ProductName).HasMaxLength(200);
             entity.Property(e => e.ProductDescription).HasMaxLength(1000);
+            entity.Property(e => e.Category).HasMaxLength(100);
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.Upc);
         });

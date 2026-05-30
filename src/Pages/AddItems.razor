@@ -39,6 +39,19 @@
 {
     <div class="card">
         <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label fw-semibold mb-1">Scan into location</label>
+                <select class="form-select" @bind="selectedCategory">
+                    @if (availableCategories != null)
+                    {
+                        @foreach (var cat in availableCategories)
+                        {
+                            <option value="@cat">@cat</option>
+                        }
+                    }
+                </select>
+            </div>
+
             <div id="reader" style="width: 100%; max-width: 600px; margin: 0 auto; border-radius: 8px; overflow: hidden;"></div>
 
             @if (lastScannedUpc != null && labelRecognitionAvailable)
@@ -207,6 +220,8 @@ else if (activeTab == "csv")
     private DotNetObjectReference<AddItems>? objRef;
     private bool isScannerRunning = false;
 
+    private string selectedCategory = "Pantry";
+
     // Front-photo card state
     private string? lastScannedUpc;
     private string? lastBarcodeSideImage; // captured at scan time
@@ -253,6 +268,7 @@ else if (activeTab == "csv")
         var provider = await AppSettingsService.GetAsync("LLM_PROVIDER");
         labelRecognitionAvailable = !string.IsNullOrWhiteSpace(provider);
         availableCategories = await Mediator.Send(new GetCategoriesQuery());
+        if (availableCategories.Any()) selectedCategory = availableCategories.First();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -307,7 +323,7 @@ else if (activeTab == "csv")
         try
         {
             Logger.LogInformation("Barcode detected: {Code}", code);
-            await Mediator.Send(new QueueScanCommand(code, ImageData: imageData));
+            await Mediator.Send(new QueueScanCommand(code, ImageData: imageData, Category: selectedCategory));
             await ToastService.ShowSuccess($"Scanned: {code}");
 
             // Store for front-photo card (only show when LLM is configured)
@@ -478,7 +494,7 @@ else if (activeTab == "csv")
     {
         try
         {
-            await Mediator.Send(new QueueScanCommand(scanUpc.Trim()));
+            await Mediator.Send(new QueueScanCommand(scanUpc.Trim(), Category: selectedCategory));
             await ToastService.ShowInfo($"UPC {scanUpc} queued for processing");
             scanUpc = "";
             await LoadRecentScans();

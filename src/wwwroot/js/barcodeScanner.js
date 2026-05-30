@@ -5,26 +5,43 @@ let lastScannedTime = 0;
 const COOLDOWN_MS = 2000;
 let _dotNetHelper = null;
 let _elementId = null;
+let _paused = false;
 
-// Returns qrbox dimensions that are always landscape-oriented (wider than tall)
-// regardless of the current device orientation, so the scan area stays consistent.
 function getQrBox() {
-    const isPortrait = window.innerHeight > window.innerWidth;
-    // In portrait the video is also portrait, so we keep the wider dimension as width
-    // to produce a wide horizontal scan strip.
-    return isPortrait ? { width: 250, height: 150 } : { width: 250, height: 150 };
+    return { width: 250, height: 150 };
 }
 
 window.barcodeScanner = {
     start: async function (dotNetHelper, elementId) {
         _dotNetHelper = dotNetHelper;
         _elementId = elementId;
+        _paused = false;
 
         if (html5QrCode) {
             await this.stop();
         }
 
-        html5QrCode = new Html5Qrcode(elementId);
+        // Build format list at call-time so the global is guaranteed to exist.
+        // Falls back to no restriction (scans everything) if the enum isn't available.
+        let scannerConfig = {};
+        try {
+            if (typeof Html5QrcodeSupportedFormats !== 'undefined') {
+                scannerConfig.formatsToSupport = [
+                    Html5QrcodeSupportedFormats.QR_CODE,
+                    Html5QrcodeSupportedFormats.EAN_13,
+                    Html5QrcodeSupportedFormats.EAN_8,
+                    Html5QrcodeSupportedFormats.UPC_A,
+                    Html5QrcodeSupportedFormats.UPC_E,
+                    Html5QrcodeSupportedFormats.CODE_128,
+                    Html5QrcodeSupportedFormats.CODE_39,
+                    Html5QrcodeSupportedFormats.ITF,
+                    Html5QrcodeSupportedFormats.DATA_MATRIX,
+                    Html5QrcodeSupportedFormats.AZTEC,
+                ];
+            }
+        } catch(e) { console.warn("Could not set scan formats:", e); }
+
+        html5QrCode = new Html5Qrcode(elementId, scannerConfig);
         const config = { fps: 10, qrbox: getQrBox() };
 
         try {
@@ -32,6 +49,7 @@ window.barcodeScanner = {
                 { facingMode: "environment" },
                 config,
                 (decodedText, decodedResult) => {
+                    if (_paused) return;
                     const now = Date.now();
                     if (decodedText !== lastScannedCode || (now - lastScannedTime) > COOLDOWN_MS) {
                         lastScannedCode = decodedText;
@@ -119,6 +137,16 @@ window.barcodeScanner = {
             await barcodeScanner.stop();
             await barcodeScanner.start(_dotNetHelper, _elementId);
         }, 400);
+    },
+
+    pauseScanning: function () {
+        _paused = true;
+    },
+
+    resetCooldown: function () {
+        _paused = false;
+        lastScannedCode = "";
+        lastScannedTime = 0;
     },
 
     stop: async function () {

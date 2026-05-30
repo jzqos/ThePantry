@@ -9,7 +9,8 @@ namespace ThePantry.Application.Commands;
 public record QueueScanCommand(
     string Upc,
     string? RawData = null,
-    string? ImageData = null
+    string? ImageData = null,
+    string? Category = null
 ) : IRequest<ScanQueueItem>;
 
 public class QueueScanHandler : IRequestHandler<QueueScanCommand, ScanQueueItem>
@@ -77,7 +78,8 @@ public class QueueScanHandler : IRequestHandler<QueueScanCommand, ScanQueueItem>
             Status = ScanStatus.Pending,
             Timestamp = DateTime.UtcNow,
             LinkedInventoryItemId = existingItem?.Id,
-            ImagePath = imagePath
+            ImagePath = imagePath,
+            Category = request.Category
         };
         
         _context.ScanQueueItems.Add(scanItem);

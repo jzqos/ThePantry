@@ -19,6 +19,7 @@ public class ScanQueueItem
     public string? ProductName { get; set; }
     public string? ProductDescription { get; set; }
     public string? ImagePath { get; set; }
-    
+    public string? Category { get; set; }
+
     public InventoryItem? LinkedInventoryItem { get; set; }
 }

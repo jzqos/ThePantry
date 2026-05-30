@@ -50,22 +50,24 @@ public class MarkAsOpenedByScannerHandler : IRequestHandler<MarkAsOpenedByScanne
         }
         else
         {
-            // Mark oldest unopened entry as opened
-            var entryToOpen = item.StockEntries
-                .OrderBy(s => s.IsOpened)
-                .ThenBy(s => s.AddedDate)
-                .FirstOrDefault();
+            // Remove the oldest unopened unit and add a fresh opened one.
+            // This keeps the rest of the stack as sealed/unopened.
+            var entryToConsume = item.StockEntries
+                .Where(s => !s.IsOpened)
+                .OrderBy(s => s.AddedDate)
+                .FirstOrDefault()
+                ?? item.StockEntries.OrderBy(s => s.AddedDate).FirstOrDefault();
 
-            if (entryToOpen != null)
+            if (entryToConsume != null)
+                _context.StockEntries.Remove(entryToConsume);
+
+            // Add the new opened unit, inheriting shelf-life from the parent item
+            _context.StockEntries.Add(new StockEntry
             {
-                entryToOpen.IsOpened = true;
-                entryToOpen.OpenedDate = DateTime.UtcNow;
-            }
-            else
-            {
-                // If no entries exist, create one
-                _context.StockEntries.Add(new StockEntry { InventoryItemId = item.Id, IsOpened = true, OpenedDate = DateTime.UtcNow });
-            }
+                InventoryItemId = item.Id,
+                IsOpened = true,
+                OpenedDate = DateTime.UtcNow
+            });
         }
 
         item.LastModifiedDate = DateTime.UtcNow;

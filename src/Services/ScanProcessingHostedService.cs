@@ -87,7 +87,7 @@ public class ScanProcessingHostedService : BackgroundService
                         {
                             Name = result.Name,
                             Description = result.Description,
-                            Category = "Pantry",
+                            Category = scanItem.Category ?? "Pantry",
                             ImageUrl = result.ImageUrl,
                             MinimumThreshold = 1,
                             CreatedDate = DateTime.UtcNow
@@ -132,7 +132,7 @@ public class ScanProcessingHostedService : BackgroundService
                             {
                                 Upc = scanItem.Upc,
                                 ImagePath = scanItem.ImagePath, // reuse barcode-side image
-                                Category = "Pantry",
+                                Category = scanItem.Category ?? "Pantry",
                                 Status = LabelScanStatus.Pending,
                                 Timestamp = DateTime.UtcNow
                             });

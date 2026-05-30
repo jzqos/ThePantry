@@ -101,7 +101,7 @@ else
                             <input type="checkbox" class="form-check-input" @onchange="ToggleSelectAll" checked="@IsAllSelected" />
                         </th>
                         <th style="width: 60px;"></th>
-                        <th style="width:30px;cursor:pointer;" @onclick='() => Sort("warning")' title="Extended shelf life items">
+                        <th style="width:30px;cursor:pointer;" @onclick='() => Sort("warning")' title="Freezer items">
                             ⚠ @GetSortIcon("warning")
                         </th>
                         <th @onclick='() => Sort("name")' style="cursor:pointer">
@@ -129,10 +129,10 @@ else
                                        checked="@selectedItemIds.Contains(item.Id)" 
                                        @onchange="@(e => ToggleItemSelection(item.Id, e.Value))" />
                             </td>
-                            <td class="text-center align-middle" title="@(item.HasExtendedShelfLife ? $"Extended shelf life: {item.ShelfLifeDays} days" : "")">
+                            <td class="text-center align-middle">
                                 @if (item.HasExtendedShelfLife)
                                 {
-                                    <span style="font-size:1.1rem;" title="Extended shelf life (@item.ShelfLifeDays days) — don't forget this item">⚠️</span>
+                                    <span style="font-size:1.1rem;" title="Freezer item — don't forget this!">⚠️</span>
                                 }
                             </td>
                             <td class="text-center align-middle">

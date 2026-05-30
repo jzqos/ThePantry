@@ -36,21 +36,18 @@
                 </div>
             </div>
 
-            @if (CurrentMode == "add")
-            {
-                <div class="mb-3">
-                    <label class="form-label fw-semibold mb-1">Scan into location</label>
-                    <select class="form-select" @bind="selectedCategory">
-                        @if (availableCategories != null)
+            <div class="mb-3">
+                <label class="form-label fw-semibold mb-1">Location</label>
+                <select class="form-select" @bind="selectedCategory">
+                    @if (availableCategories != null)
+                    {
+                        @foreach (var cat in availableCategories)
                         {
-                            @foreach (var cat in availableCategories)
-                            {
-                                <option value="@cat">@cat</option>
-                            }
+                            <option value="@cat">@cat</option>
                         }
-                    </select>
-                </div>
-            }
+                    }
+                </select>
+            </div>
 
             <div class="scanner-container position-relative bg-dark rounded overflow-hidden mb-3" style="min-height: 300px;">
                 <div id="reader" style="width: 100%;"></div>
@@ -104,23 +101,35 @@
 
             @if (lastProcessedItem != null)
             {
-                <div class="alert @GetAlertClass() d-flex align-items-center animate-fade-in">
-                    @if (!string.IsNullOrEmpty(lastProcessedItem.ImageUrl))
-                    {
-                        <img src="@lastProcessedItem.ImageUrl" alt="@lastProcessedItem.Name" class="rounded me-3" style="width: 50px; height: 50px; object-fit: cover;" />
-                    }
-                    else
-                    {
-                        <div class="rounded me-3 bg-secondary d-flex align-items-center justify-content-center text-white" style="width: 50px; height: 50px;">
-                            <span class="oi oi-image"></span>
+                <div class="card border-@GetAlertColor() mb-3 animate-fade-in">
+                    <div class="card-body py-2 px-3">
+                        <div class="d-flex align-items-center mb-2">
+                            @if (!string.IsNullOrEmpty(lastProcessedItem.ImageUrl))
+                            {
+                                <img src="@lastProcessedItem.ImageUrl" alt="@lastProcessedItem.Name" class="rounded me-3" style="width: 48px; height: 48px; object-fit: cover;" />
+                            }
+                            else
+                            {
+                                <div class="rounded me-3 bg-secondary d-flex align-items-center justify-content-center text-white flex-shrink-0" style="width: 48px; height: 48px;">
+                                    <span class="oi oi-image"></span>
+                                </div>
+                            }
+                            <div class="flex-grow-1">
+                                <div class="fw-bold">@lastProcessedItem.Name</div>
+                                <div class="small text-muted">
+                                    @if (CurrentMode == "add") { <span>Added to @lastProcessedItem.Category — count: @lastProcessedItem.OnHandCount</span> }
+                                    else if (CurrentMode == "open") { <span>Opened — @lastProcessedItem.OnHandCount remaining sealed</span> }
+                                    else { <span>Used — @lastProcessedItem.OnHandCount remaining</span> }
+                                </div>
+                            </div>
                         </div>
-                    }
-                    <div>
-                        <div class="fw-bold">@lastProcessedItem.Name</div>
-                        <div class="small">
-                            @if (CurrentMode == "add") { <span>Added to @lastProcessedItem.Category! Count: @lastProcessedItem.OnHandCount</span> }
-                            else if (CurrentMode == "open") { <span>Item status updated</span> }
-                            else { <span>Used! Remaining: @lastProcessedItem.OnHandCount</span> }
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-success btn-sm flex-grow-1" @onclick="ConfirmScan">
+                                <span class="oi oi-check me-1"></span> OK
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm flex-grow-1" @onclick="RetryScan">
+                                <span class="oi oi-reload me-1"></span> Wrong item — retry
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -350,6 +359,8 @@
             }
 
             lastProcessedItem = result;
+            // Pause the scanner so the result card stays visible until user confirms
+            await JS.InvokeVoidAsync("barcodeScanner.pauseScanning");
         }
         catch (Exception ex)
         {
@@ -479,13 +490,39 @@
         StateHasChanged();
     }
 
-    private string GetAlertClass() => CurrentMode switch
+    private string GetAlertColor() => CurrentMode switch
     {
-        "add" => "alert-success",
-        "open" => "alert-warning",
-        "use" => "alert-danger",
-        _ => "alert-info"
+        "add"  => "success",
+        "open" => "warning",
+        "use"  => "danger",
+        _      => "info"
     };
+
+    private async Task ConfirmScan()
+    {
+        lastProcessedItem = null;
+        // Resume the scanner cooldown so the next item can be scanned immediately
+        await JS.InvokeVoidAsync("barcodeScanner.resetCooldown");
+        StateHasChanged();
+    }
+
+    private async Task RetryScan()
+    {
+        // Undo the last action if possible, then clear the result
+        if (lastProcessedItem != null && CurrentMode == "add")
+        {
+            try { await Mediator.Send(new DecrementInventoryCommand(lastProcessedItem.Id)); }
+            catch { /* best effort */ }
+        }
+        else if (lastProcessedItem != null && CurrentMode == "use")
+        {
+            try { await Mediator.Send(new IncrementInventoryCommand(lastProcessedItem.Id)); }
+            catch { /* best effort */ }
+        }
+        lastProcessedItem = null;
+        await JS.InvokeVoidAsync("barcodeScanner.resetCooldown");
+        StateHasChanged();
+    }
 
     public async ValueTask DisposeAsync()
     {
