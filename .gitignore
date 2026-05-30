@@ -46,3 +46,10 @@ ThePantry/wwwroot/uploads/
 dist/
 
 *.db*
+
+# Environment files — contain passwords and secrets
+.env
+# (keep .env.example — it has no real values)
+
+# Runtime data — scan images, product cache, database backups
+data/
