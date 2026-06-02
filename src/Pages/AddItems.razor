@@ -349,10 +349,14 @@ else if (activeTab == "csv")
 
                 unknownScanPending = true;
                 frontPhotoAdded = false;
-                // Pause scanner so the card stays visible
-                try { await JS.InvokeVoidAsync("barcodeScanner.pauseScanning"); } catch { }
+                // Scanner stays paused (_paused=true set in JS callback); user dismisses card to resume
             }
-            // Known items: no card, scanner resumes automatically after the 1s cooldown
+            else
+            {
+                // Known item: release the pause set in the JS callback, starting a fresh 1s cooldown.
+                // This guarantees exactly one add per item regardless of how long the DB/API call took.
+                try { await JS.InvokeVoidAsync("barcodeScanner.resetCooldown"); } catch { }
+            }
 
             await LoadRecentScans();
         }

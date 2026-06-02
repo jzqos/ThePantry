@@ -98,6 +98,9 @@ window.barcodeScanner = {
                             console.error("Failed to capture image", e);
                         }
 
+                        // Pause immediately so no duplicate fires while .NET is processing
+                        _paused = true;
+
                         console.log("Barcode detected:", decodedText);
                         dotNetHelper.invokeMethodAsync('HandleBarcodeDetected', decodedText, imageData)
                             .then(() => {
