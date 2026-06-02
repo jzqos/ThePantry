@@ -2,7 +2,7 @@
 let html5QrCode;
 let lastScannedCode = "";
 let lastScannedTime = 0;
-const COOLDOWN_MS = 2000;
+const COOLDOWN_MS = 1000;
 let _dotNetHelper = null;
 let _elementId = null;
 let _paused = false;
@@ -145,9 +145,9 @@ window.barcodeScanner = {
 
     resetCooldown: function () {
         _paused = false;
-        // Keep lastScannedCode so the same barcode still has a 2-second cooldown.
-        // Without this, pressing OK while the barcode is still in view immediately
-        // re-processes the same item.
+        // Keep lastScannedCode so the same barcode still has a 1-second cooldown.
+        // Without this, dismissing the unknown-item card while the barcode is still
+        // in view immediately re-processes the same item.
         lastScannedTime = Date.now();
     },
 

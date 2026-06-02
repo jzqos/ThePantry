@@ -55,64 +55,38 @@
 
             <div id="reader" style="width: 100%; max-width: 600px; margin: 0 auto; border-radius: 8px; overflow: hidden;"></div>
 
-            @* Scan confirmation card — shown after every scan until user confirms *@
-            @if (lastScanResult != null)
+            @* Unknown-item card — only shown when a barcode wasn't found in OpenFoodFacts *@
+            @if (unknownScanPending && lastQueuedItemId.HasValue)
             {
-                <div class="card border-@(lastScanIsUnknown ? "warning" : "success") mt-3">
+                <div class="card border-warning mt-3">
                     <div class="card-body py-2 px-3">
-                        <div class="d-flex align-items-center mb-2">
-                            @if (!string.IsNullOrEmpty(lastScanResult.ImageUrl))
-                            {
-                                <img src="@lastScanResult.ImageUrl" class="rounded me-2 flex-shrink-0" style="width:40px;height:40px;object-fit:cover;" />
-                            }
-                            <div>
-                                <div class="fw-semibold">
-                                    @if (lastScanIsUnknown)
-                                    {
-                                        <span class="text-warning-emphasis"><span class="oi oi-question-mark me-1"></span> Unknown product — queued for recognition</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="text-success-emphasis"><span class="oi oi-check me-1"></span> @lastScanResult.Name</span>
-                                    }
-                                </div>
-                                <div class="small text-muted">→ @lastScanResult.Category &nbsp;·&nbsp; @lastScanResult.OnHandCount in stock</div>
-                            </div>
+                        <div class="fw-semibold mb-2">
+                            <span class="oi oi-question-mark me-1 text-warning"></span>
+                            Unknown product — queued for AI recognition
                         </div>
 
-                        @* Front-photo card for unknown items only *@
-                        @if (lastScanIsUnknown && labelRecognitionAvailable && lastQueuedItemId.HasValue)
+                        @if (frontPhotoAdded)
                         {
-                            <div class="mb-2">
-                                @if (frontPhotoAdded)
+                            <div class="alert alert-success py-1 small mb-2">Front photo attached — label will be recognised automatically.</div>
+                        }
+                        else
+                        {
+                            <button class="btn btn-warning btn-sm w-100 mb-2" @onclick="CaptureFrontPhoto" disabled="@capturingFrontPhoto">
+                                @if (capturingFrontPhoto)
                                 {
-                                    <div class="alert alert-success py-1 small mb-0">Front photo attached — label will be recognized automatically.</div>
+                                    <span class="spinner-border spinner-border-sm me-1"></span>
                                 }
                                 else
                                 {
-                                    <button class="btn btn-warning btn-sm w-100 mb-1" @onclick="CaptureFrontPhoto" disabled="@capturingFrontPhoto">
-                                        @if (capturingFrontPhoto)
-                                        {
-                                            <span class="spinner-border spinner-border-sm me-1"></span>
-                                        }
-                                        else
-                                        {
-                                            <span class="oi oi-camera me-1"></span>
-                                        }
-                                        Capture front label photo (optional)
-                                    </button>
+                                    <span class="oi oi-camera me-1"></span>
                                 }
-                            </div>
+                                Capture front label photo (optional)
+                            </button>
                         }
 
-                        <div class="d-flex gap-2">
-                            <button class="btn btn-success btn-sm flex-grow-1" @onclick="ConfirmScan">
-                                <span class="oi oi-check me-1"></span> OK
-                            </button>
-                            <button class="btn btn-outline-secondary btn-sm flex-grow-1" @onclick="RetryScan">
-                                <span class="oi oi-reload me-1"></span> Wrong item — retry
-                            </button>
-                        </div>
+                        <button class="btn btn-outline-secondary btn-sm w-100" @onclick="DismissUnknownCard">
+                            <span class="oi oi-arrow-right me-1"></span> Continue scanning
+                        </button>
                     </div>
                 </div>
             }
@@ -253,15 +227,10 @@ else if (activeTab == "csv")
 
     private string selectedCategory = "Pantry";
 
-    // Scan confirmation card state
-    private ThePantry.Domain.InventoryItem? lastScanResult;  // result of most recent scan
-    private bool lastScanIsUnknown;
-    private int? lastQueuedItemId;      // LabelQueueItem.Id when product is unknown
-    private bool isScanning = false;    // blocks HandleBarcodeDetected while card is showing
-
-    // Front-photo state (used when product is unknown)
-    private string? lastScannedUpc;
-    private string? lastBarcodeSideImage;
+    // Unknown-item card state (shown only when barcode not found in OpenFoodFacts)
+    private bool unknownScanPending = false;
+    private int? lastQueuedItemId;           // LabelQueueItem.Id for the pending unknown item
+    private bool isScanning = false;         // prevents re-entrant HandleBarcodeDetected
     private bool labelRecognitionAvailable;
     private bool frontPhotoAdded;
     private bool capturingFrontPhoto;
@@ -357,32 +326,33 @@ else if (activeTab == "csv")
     [JSInvokable]
     public async Task HandleBarcodeDetected(string code, string? imageData)
     {
-        // Block while showing the confirmation card for the previous scan
-        if (isScanning || lastScanResult != null) return;
+        // Block re-entrant calls while processing the current scan
+        if (isScanning) return;
+        // Also block if the unknown-item card is showing (user must dismiss it first)
+        if (unknownScanPending) return;
         isScanning = true;
 
         try
         {
             Logger.LogInformation("Barcode detected: {Code}", code);
 
-            // Inline lookup — gives immediate feedback and catches unknown items right away
             var result = await Mediator.Send(new IncrementInventoryByScannerCommand(code, 1, selectedCategory));
-            lastScanResult = result;
-            lastScannedUpc = code;
-            lastBarcodeSideImage = imageData;
-            frontPhotoAdded = false;
-            lastQueuedItemId = null;
 
-            lastScanIsUnknown = result.Name.StartsWith("Unknown Product (");
+            var isUnknown = result.Name.StartsWith("Unknown Product (");
 
-            if (lastScanIsUnknown && labelRecognitionAvailable)
+            if (isUnknown && labelRecognitionAvailable)
             {
-                // Queue for LLM label recognition and capture barcode-side image
+                // Queue for LLM label recognition, delete the placeholder inventory item
                 var storagePath = Configuration["ScanStoragePath"] ?? "/uploads/scans";
                 lastQueuedItemId = await Mediator.Send(new QueueLabelScanCommand(code, imageData, selectedCategory, storagePath));
-                // Remove the placeholder item the command created
                 try { await Mediator.Send(new DeleteInventoryItemCommand(result.Id)); } catch { }
+
+                unknownScanPending = true;
+                frontPhotoAdded = false;
+                // Pause scanner so the card stays visible
+                try { await JS.InvokeVoidAsync("barcodeScanner.pauseScanning"); } catch { }
             }
+            // Known items: no card, scanner resumes automatically after the 1s cooldown
 
             await LoadRecentScans();
         }
@@ -390,47 +360,21 @@ else if (activeTab == "csv")
         {
             Logger.LogError(ex, "Error processing barcode {Code}", code);
             await ToastService.ShowError("Failed to process scan.");
-            lastScanResult = null;
         }
         finally
         {
             isScanning = false;
         }
 
-        if (lastScanResult != null)
-            try { await JS.InvokeVoidAsync("barcodeScanner.pauseScanning"); } catch { }
-
         StateHasChanged();
     }
 
-    private async Task ConfirmScan()
+    private async Task DismissUnknownCard()
     {
-        lastScanResult = null;
-        lastScanIsUnknown = false;
+        unknownScanPending = false;
         lastQueuedItemId = null;
         frontPhotoAdded = false;
         StateHasChanged();
-        try { await JS.InvokeVoidAsync("barcodeScanner.resetCooldown"); } catch { }
-    }
-
-    private async Task RetryScan()
-    {
-        var result = lastScanResult;
-        var wasUnknown = lastScanIsUnknown;  // capture before clearing
-        lastScanResult = null;
-        lastScanIsUnknown = false;
-        lastQueuedItemId = null;
-        frontPhotoAdded = false;
-        StateHasChanged();
-
-        // For known items: undo the stock entry that was just added
-        if (result != null && !wasUnknown)
-            try { await Mediator.Send(new DecrementInventoryCommand(result.Id)); } catch { }
-
-        // For unknown items: the placeholder inventory item was already deleted in
-        // HandleBarcodeDetected. The LabelQueueItem will time out in the background.
-        // Nothing more to undo.
-
         try { await JS.InvokeVoidAsync("barcodeScanner.resetCooldown"); } catch { }
     }
 
@@ -466,11 +410,6 @@ else if (activeTab == "csv")
         }
     }
 
-    private void DismissFrontPhotoCard()
-    {
-        lastScannedUpc = null;
-        frontPhotoAdded = false;
-    }
     
     private async Task LoadRecentScans()
     {
